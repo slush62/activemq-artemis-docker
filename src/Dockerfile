@@ -4,7 +4,7 @@
 ## Build Image                                           #
 ##########################################################
 ARG BASE_IMAGE
-FROM openjdk:8u171-jdk-stretch as builder
+FROM openjdk:8 as builder
 LABEL maintainer="Victor Romero <victor.romero@gmail.com>"
 
 ARG ACTIVEMQ_ARTEMIS_VERSION
@@ -17,11 +17,11 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN apt-get -qq -o=Dpkg::Use-Pty=0 update && \
   apt-get -qq -o=Dpkg::Use-Pty=0 install -y --no-install-recommends \
-    libaio1=0.3.110-3 \
-    xmlstarlet=1.6.1-2 \
-    jq=1.5+dfsg-1.3 \
-    ca-certificates=20161130+nmu1+deb9u1 \
-    wget=1.18-5+deb9u2 && \
+    libaio1 \
+    xmlstarlet \
+    jq \
+    ca-certificates \
+    wget && \
   rm -rf /var/lib/apt/lists/*
 
 # Make sure pipes are considered to detemine success, see: https://github.com/hadolint/hadolint/wiki/DL4006

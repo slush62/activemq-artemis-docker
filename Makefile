@@ -15,7 +15,8 @@ getVersionFromTag=$(call getPart,$1, 1)
 getVariantFromTag=$(call getPart,$1, 2)
 getFullTagNameFromTag=$(call lookupRepositoryFromTag,$1):$(call getVersionFromTag,$1)$(if $(call getVariantFromTag,$1),-$(call getVariantFromTag,$1),"")
 
-%: build_% test_% tag_%
+# %: build_% test_% tag_%
+%: build_%
 	
 
 build_%:
