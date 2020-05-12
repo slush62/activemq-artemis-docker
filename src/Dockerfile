@@ -132,12 +132,12 @@ RUN groupadd -g 1000 -r artemis && useradd -r -u 1000 -g artemis artemis
 
 RUN apt-get -qq -o=Dpkg::Use-Pty=0 update && \
   apt-get -qq -o=Dpkg::Use-Pty=0 install -y --no-install-recommends \
-    libaio1=0.3.110-3 \
-    xmlstarlet=1.6.1-2 \
-    jq=1.5+dfsg-1.3 \
-    gettext-base=0.19.8.1-2+deb9u1 \
-    dumb-init=1.2.0-1 \
-    procps=2:3.3.12-3+deb9u1 && \
+    libaio1 \
+    xmlstarlet \
+    jq \
+    gettext-base \
+    dumb-init \
+    procps && \
   rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder "/opt/apache-artemis-${ACTIVEMQ_ARTEMIS_VERSION}" "/opt/apache-artemis-${ACTIVEMQ_ARTEMIS_VERSION}"
