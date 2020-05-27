@@ -1,0 +1,298 @@
+# network
+
+docker network create --driver=bridge --subnet=172.0.20.0/24 --gateway=172.0.20.1 geoswarm
+
+# postgres/postgis
+cd ~/git clone https://github.com/kartoza/docker-postgis.git
+docker pull kartoza/postgis
+cd docker-postgis
+docker build -t docker/postgis .
+sudo mkdir -p /opt/postgres/data
+
+# current postgis images images
+docker/postgis    latest        04e11903fb43   6 minutes ago  763MB
+kartoza/postgis   latest        7cb82ac8ebf6   29 hours ago   763MB
+debian            buster-slim   4e22ed854b0a   5 days ago     69.2MB
+
+
+# initial startup
+
+docker run --name=postgis -d --network=geoswarm \
+-e POSTGRES_USER=geoserver -e POSTGRES_PASS=geoserver \
+-e POSTGRES_DBNAME=geoserver -e ALLOW_IP_RANGE=0.0.0.0/0 \
+-e DATADIR:/opt/postgres/data -e DEFAULT_ENCODING=UTF8 \
+-e DEFAULT_COLLATION=id_ID.utf8 -e DEFAULT_CTYPE=id_ID.utf8 \
+-p 5432:5432 -v /opt/postgres/data:/var/lib/postgresql \
+-v /opt/postgres/xfer:/xfer \
+--restart=always docker/postgis
+
+#alter user geoserver
+psql -h localhost -U geoserver -W -d postgres
+=# \du
+=# ALTER USER geoserver WITH SUPERUSER;
+=# ALTER USER geoserver WITH CREATEDB;
+=# \q
+
+# commit docker/postgis container to create new image
+docker ps -a
+docker commit <containerID> postgis:geoserver
+
+
+# geoserver
+# read https://docs.geoserver.org/stable/en/user/data/raster/gdal.html
+# This GeoServer instance is running version 2.16.2. 
+# openjdk version "1.8.0_242"
+
+cd ~/git
+git clone https://github.com/GeoNode/geoserver-docker.git
+docker pull geonode/geoserver
+cd geoserver-docker
+docker build -t geonode/geoserver .
+sudo mkdir /opt/geoserver
+
+# current postgis images images
+geonode/geoserver   latest    db8a425a9adf    6 minutes ago       1.14GB
+geonode/geoserver   <none>    068f05e24faa    11 months ago       953MB
+tomcat              9-jre8    e24825d32965    11 months ago       464MB
+
+
+wget --no-check-certificate https://build.geo-solutions.it/geonode/geoserver/latest/data-2.16.2.zip
+wget http://sourceforge.net/projects/geoserver/files/GeoServer/2.16.1/extensions/geoserver-2.16.1-gdal-plugin.zip
+wget --no-check-certificate https://demo.geo-solutions.it/share/github/imageio-ext/releases/1.1.X/1.1.10/native/gdal/gdal-data.zip
+wget http://sourceforge.net/projects/geoserver/files/GeoServer/2.16.2/extensions/geoserver-2.16.2-netcdf-plugin.zip
+wget http://sourceforge.net/projects/geoserver/files/GeoServer/2.16.2/extensions/geoserver-2.16.2-grib-plugin.zip
+# https://sourceforge.net/projects/libjpeg-turbo/files/2.0.4/libjpeg-turbo-official_2.0.4_amd64.deb/download
+wget --no-check-certificate https://build.geoserver.org/geoserver/2.16.x/ext-latest/geoserver-2.16-SNAPSHOT-libjpeg-turbo-plugin.zip
+# geoserver-2.16.2-netcdf-out-plugin.zip
+# geoserver-2.16-SNAPSHOT-geofence-server-plugin.zip
+
+
+docker run --name geoserver --network=geoswarm \
+-v /var/run/docker.sock:/var/run/docker.sock \
+-v /opt/geoserver/data/:/geoserver_data/data -d \
+-p 8080:8080 geonode/geoserver
+
+
+# commit geonode/geoserver container to create new image
+docker commit <containerID> geoserver:deployed
+
+# stop and destroy containers
+docker stop $(docker ps -aq)
+docker rm $(docker ps -aq)
+
+# create setenv.sh file
+echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib:/usr/lib/jni:/opt/libjpeg-turbo/lib64" > setenv.sh
+echo "export GDAL_DATA=/usr/share/gdal/2.2" >> setenv.sh
+
+# add GDAL and other extensions to geoserver
+# vi Dockerfile.postgres
+# Use this Dockerfile definition
+FROM geoserver:deployed
+ENV container docker
+
+RUN apt-get -y update
+RUN apt-get -y upgrade
+
+#GDAL
+RUN apt-get install -y gdal-bin libgdal-java unzip
+WORKDIR /root
+COPY ./geoserver-2.16.1-gdal-plugin.zip .
+RUN unzip -o -d /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/ geoserver-2.16.1-gdal-plugin.zip
+COPY ./data-2.16.2.zip .
+RUN unzip -o -d /usr/local/tomcat/webapps/geoserver data-2.16.2.zip
+COPY ./gdal-data.zip .
+RUN mkdir -p /usr/share/gdal/2.2
+RUN unzip -o -d /usr/share/gdal/2.2 gdal-data.zip
+COPY ./setenv.sh .
+RUN cp setenv.sh /usr/local/tomcat/bin/
+
+# More extensions
+# NetCDF
+COPY ./geoserver-2.16.2-netcdf-plugin.zip .
+RUN unzip -o -d /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/ geoserver-2.16.2-netcdf-plugin.zip
+
+# GRIB
+COPY ./geoserver-2.16.2-grib-plugin.zip .
+RUN unzip -o -d /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/ geoserver-2.16.2-grib-plugin.zip
+
+# NetCDF Output
+COPY ./geoserver-2.16.2-netcdf-out-plugin.zip .
+RUN unzip -o -d /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/ geoserver-2.16.2-netcdf-out-plugin.zip
+
+# libjpeg-turbo
+COPY ./libjpeg-turbo-official_2.0.4_amd64.deb .
+WORKDIR /
+RUN apt install -y /root/libjpeg-turbo-official_2.0.4_amd64.deb
+WORKDIR /root
+COPY ./geoserver-2.16-SNAPSHOT-libjpeg-turbo-plugin.zip .
+RUN unzip -o -d /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/ geoserver-2.16-SNAPSHOT-libjpeg-turbo-plugin.zip
+
+# version upgrade
+RUN rm -f /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/gt-imageio-ext-gdal-22.1.jar
+RUN rm -f /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/gs-gdal-2.16.1.jar
+
+# geofence server
+COPY ./geoserver-2.16-SNAPSHOT-geofence-server-plugin.zip .
+RUN unzip -o -d /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/ geoserver-2.16-SNAPSHOT-geofence-server-plugin.zip
+
+# clean out old versions
+RUN rm -f /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/asm-3.1.jar
+RUN rm -f /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/asm-5.0.3.jar
+RUN rm -f /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/asm-tree-5.0.3.jar
+RUN rm -f /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/asm-util-5.0.3.jar
+RUN rm -f /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/geofence-model-internal-3.4.2.jar
+RUN rm -f /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/geofence-persistence-3.4.2.jar
+RUN rm -f /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/geofence-services-api-3.4.2.jar
+RUN rm -f /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/geofence-services-impl-3.4.2.jar
+RUN rm -f /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/gs-geofence-2.16-SNAPSHOT.jar
+RUN rm -f /usr/local/tomcat/webapps/geoserver/WEB-INF/lib/gs-geofence-server-2.16-SNAPSHOT.jar
+####################### END OF Dockerfile.postgres
+
+
+# create new geoserver image
+docker build -f Dockerfile.postgres -t geoserver/postgres .
+
+
+# add pgrouting and pointcloud extensions to postgis DB image
+# vi Dockerfile.postgis
+# Use this Dockerfile definition
+FROM postgis:geoserver
+RUN apt-get -y update
+RUN apt-get -y upgrade
+
+RUN apt-get install -y cmake g++ libboost-graph-dev libcgal-dev
+RUN apt-get install -y postgresql-12 postgresql-server-dev-12 postgresql-12-postgis-3
+RUN apt-get install -y git
+RUN mkdir /root/git
+WORKDIR /root/git
+RUN git clone git://github.com/pgRouting/pgrouting.git
+WORKDIR /root/git/pgrouting
+RUN git checkout v2.6.3
+RUN mkdir /root/git/pgrouting/build
+WORKDIR /root/git/pgrouting/build
+RUN cmake -DWITH_DOC=OFF -DBUILD_DOXY=OFF -DBUILD_HTML=OFF -L ..
+RUN make install
+WORKDIR /root
+# pointcloud
+RUN apt-get install -y libxml2-dev libcunit1 libcunit1-doc libcunit1-dev
+RUN apt-get install -y autoconf
+WORKDIR /root/git
+RUN git clone https://github.com/pgpointcloud/pointcloud.git
+WORKDIR /root/git/pointcloud
+RUN ./autogen.sh
+RUN ./configure --with-pgconfig=/usr/lib/postgresql/12/bin/pg_config
+RUN make
+RUN make install
+WORKDIR /root
+####################### END OF Dockerfile.postgis
+
+
+
+# create new postgres/postgis image
+docker build -f Dockerfile.postgis -t postgres/postgis .
+
+# start postgis container
+docker run --name=postgis -d --network=geoswarm \
+-e POSTGRES_USER=geoserver -e POSTGRES_PASS=geoserver \
+-e POSTGRES_DBNAME=geoserver -e ALLOW_IP_RANGE=0.0.0.0/0 \
+-e DATADIR:/opt/postgres/data -e DEFAULT_ENCODING=UTF8 \
+-e DEFAULT_COLLATION=id_ID.utf8 -e DEFAULT_CTYPE=id_ID.utf8 \
+-p 5432:5432 -v /opt/postgres/data:/var/lib/postgresql \
+-v /opt/postgres/xfer:/xfer \
+--restart=always postgres/postgis
+
+
+# create pgRouting extension
+psql -h localhost -U geoserver -W -d postgres \
+--command "CREATE EXTENSION postgis;"
+
+
+# create pgRouting extension
+psql -h localhost -U geoserver -W -d postgres \
+--command "CREATE EXTENSION pgrouting;"
+
+# create  pointcloud extension
+psql -h localhost -U geoserver -W -d postgres \
+--command "CREATE EXTENSION pointcloud;"
+
+# import pg_dump from earl
+docker container exec  -it postgis /bin/bash
+pg_restore -h localhost -d geoserver -U geoserver /xfer/test.sql
+exit
+
+
+# startup geoserver
+
+docker run --name geoserver --network=geoswarm \
+-v /var/run/docker.sock:/var/run/docker.sock \
+-v /opt/geoserver/data/:/geoserver_data/data -d \
+-p 8080:8080 geoserver/postgres
+
+# pull openjdk
+docker pull openjdk:8
+
+
+# Artemis
+cd ~/git
+git clone https://github.com/vromero/activemq-artemis-docker.git
+cd activemq-artemis-docker/src
+cp Dockerfile Dockerfile-latest
+################################################
+# see https://github.com/slush62/myDockerfiles.git
+################################################
+
+docker build --build-arg ACTIVEMQ_ARTEMIS_VERSION=2.12.0 --build-arg BASE_IMAGE=openjdk:8 -t artemis-docker -f Dockerfile-latest .
+
+docker run -it -d --name=artemis --network=geoswarm \
+-p 8161:8161 -p 61616:61616  \
+artemis-docker
+
+# to look at volumes use
+# docker inspect -f "{{json .Mounts}}" artemis | jq .
+# 
+
+
+# pull docker perl
+docker pull amd64/perl
+
+# Dockerfile earlcode/dockerBase/Dockerfile
+#
+FROM amd64/perl
+RUN apt-get -y update
+RUN apt-get -y upgrade
+RUN apt-get install -y cpanminus libgd-dev
+RUN cpanm Time::localtime
+RUN cpanm Time::gmtime
+RUN cpanm Date::Manip
+RUN cpanm LWP::UserAgent
+RUN cpanm LWP::Simple
+RUN cpanm LWP::Protocol::https
+RUN cpanm Math::Trig
+RUN cpanm DBI
+RUN cpanm Geometry::Primitive::Polygon
+RUN cpanm Geometry::Primitive::Point
+RUN cpanm DateTime::Format::Pg
+RUN cpanm DBD::Pg
+RUN cpanm GD
+RUN cpanm Net::STOMP::Client
+
+RUN mkdir log
+RUN mkdir warnings
+RUN mkdir alpha1
+RUN mkdir alpha2
+RUN mkdir alpha
+RUN mkdir watches
+RUN mkdir test
+RUN mkdir images
+RUN mkdir holdingweb2
+
+# build perl base image perl/wmss
+docker build -t perl/wmss .
+
+# build NWS warnings image
+cd ~/earlcode/NWSwarning/docker
+docker build -t perl/nwswarning .
+
+# create data volume
+sudo mkdir -p /opt/wxcaster/nwswarning
+
